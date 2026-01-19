@@ -1,12 +1,12 @@
 version = "1.0"
 
 [metadata]
-author_name = "SkillsBench"
-author_email = "skillsbench@example.com"
+author_name = "Kaiser Sun"
+author_email = "hsun74@jhu.edu"
 difficulty = "medium"
-category = "document-transformation"
-tags = ["markdown", "mdx", "fumadocs", "documentation", "format-conversion"]
-data_source = "Synthetically generated markdown samples for testing transformation"
+category = "document-generation"
+tags = ["markdown", "mdx", "fumadocs", "format-conversion"]
+data_source = "Directly taken from existing real-world open source md files. Current using the CONTRIUTING.md in SkillsBench, but can be swapped for any .md files for testing."
 
 [verifier]
 timeout_sec = 300.0
