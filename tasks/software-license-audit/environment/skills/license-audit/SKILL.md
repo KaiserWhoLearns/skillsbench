@@ -1,3 +1,8 @@
+---
+name: license-audit
+description: "Perform software license audits by analyzing dependencies and checking them against organizational policies. Covers license types, compatibility, compliance checking, and report generation in JSON and Excel formats."
+---
+
 # License Audit Skill
 
 This skill helps you perform software license audits by analyzing dependencies and checking them against organizational policies.

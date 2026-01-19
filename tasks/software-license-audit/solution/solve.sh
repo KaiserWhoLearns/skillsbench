@@ -66,11 +66,11 @@ for dep in dependencies_data["dependencies"]:
         "version": dep["version"],
         "license": dep["license"],
         "type": dep_type,
-        "compliant": violation_type is None
+        "compliant": violation_type is None,
+        "exception": exception_applied  # Always include exception field
     }
 
     if exception_applied:
-        dep_entry["exception"] = True
         dep_entry["exception_reason"] = next(
             (e["reason"] for e in policy["exceptions"] if e["package"] == dep["name"]),
             "Exception granted"
