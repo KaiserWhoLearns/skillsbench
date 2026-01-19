@@ -1,0 +1,71 @@
+{
+  "organization": "Huggingface Inc.",
+  "policy_version": "2.0",
+  "last_updated": "2024-01-15",
+  "allowed_licenses": {
+    "runtime": [
+      "MIT",
+      "Apache-2.0",
+      "BSD-3-Clause",
+      "BSD-2-Clause",
+      "ISC",
+      "PSF",
+      "HPND",
+      "Unlicense"
+    ],
+    "development": [
+      "MIT",
+      "Apache-2.0",
+      "BSD-3-Clause",
+      "BSD-2-Clause",
+      "ISC",
+      "PSF",
+      "HPND",
+      "MPL-2.0",
+      "GPL-3.0",
+      "AGPL-3.0"
+    ]
+  },
+  "restricted_licenses": {
+    "runtime": [
+      "GPL-3.0",
+      "GPL-2.0",
+      "LGPL-2.1",
+      "LGPL-3.0",
+      "AGPL-3.0",
+      "MPL-2.0",
+      "Elastic-2.0"
+    ],
+    "development": [
+      "Elastic-2.0"
+    ]
+  },
+  "prohibited_licenses": {
+    "runtime": [
+      "SSPL-1.0",
+      "Commons-Clause",
+      "Proprietary",
+      "UNLICENSED"
+    ],
+    "development": [
+      "SSPL-1.0",
+      "Commons-Clause",
+      "Proprietary",
+      "UNLICENSED"
+    ]
+  },
+  "dual_license_handling": "most_permissive",
+  "exceptions": [
+    {
+      "package": "elasticsearch",
+      "reason": "Legacy system dependency, migration planned Q3 2024",
+      "approved_by": "CTO",
+      "expiry": "2024-09-30"
+    }
+  ],
+  "compliance_requirements": {
+    "attribution_required": true,
+    "notice_file_required": true,
+    "source_disclosure_required": false
+  }
+}

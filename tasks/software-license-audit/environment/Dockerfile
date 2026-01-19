@@ -2,20 +2,25 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Python and dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
+    nodejs \
+    npm \
     curl \
+    git \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python packages
+# Install Python packages for license scanning and reporting
 RUN pip3 install --break-system-packages \
-    python-docx==1.1.2
+    openpyxl==3.1.5 \
+    requests==2.32.3
 
-# Copy input files
-COPY offer_letter_template.docx /root/offer_letter_template.docx
-COPY employee_data.json /root/employee_data.json
+# Copy project dependencies and policy files
+COPY project_dependencies.json /root/project_dependencies.json
+COPY license_policy.json /root/license_policy.json
 
 # Copy skills to all agent paths
 COPY skills /root/.claude/skills
