@@ -4,7 +4,7 @@ version = "1.0"
 author_name = "Kaiser Sun"
 author_email = "hsun74@jhu.edu"
 difficulty = "medium"
-category = "software-development"
+category = "software-engineering"
 tags = [ "software-development", "excel", "open-source", "audit"]
 
 [verifier]
