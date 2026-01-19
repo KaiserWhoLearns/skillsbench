@@ -5,13 +5,7 @@ author_name = "Kaiser Sun"
 author_email = "hsun74@jhu.edu"
 difficulty = "medium"
 category = "software-development"
-tags = [
-  "compliance",
-  "license",
-  "audit",
-  "dependency-management",
-  "open-source"
-]
+tags = [ "software-development", "excel", "open-source", "audit"]
 
 [verifier]
 timeout_sec = 900.0
@@ -22,7 +16,6 @@ timeout_sec = 900.0
 [environment]
 build_timeout_sec = 600.0
 cpus = 1
-gpus = 0
-memory = "4G"
-storage = "10G"
+memory = 4096
+storage = 10240
 allow_internet = true

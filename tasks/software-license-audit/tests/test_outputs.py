@@ -27,11 +27,17 @@ class TestLicenseAuditReport:
         for key in required_keys:
             assert key in report, f"Missing required key '{key}' in JSON report"
 
-        # Check summary structure
+        # Check summary structure and field types
         assert "total_dependencies" in report["summary"], \
             "Missing 'total_dependencies' in summary"
+        assert isinstance(report["summary"]["total_dependencies"], int), \
+            f"'total_dependencies' must be integer, got {type(report['summary']['total_dependencies'])}"
+
         assert "total_violations" in report["summary"], \
             "Missing 'total_violations' in summary"
+        assert isinstance(report["summary"]["total_violations"], int), \
+            f"'total_violations' must be integer, got {type(report['summary']['total_violations'])}"
+
         assert "violation_categories" in report["summary"], \
             "Missing 'violation_categories' in summary"
 
@@ -95,58 +101,118 @@ class TestLicenseAuditReport:
             is_violation = (violation["license"] in policy.get("restricted_licenses", {}).get("development", []) or
                           violation["license"] in policy.get("prohibited_licenses", {}).get("development", []))
 
-            # Also check if it has an exception
-            has_exception = any(e["package"] == violation["name"] for e in policy.get("exceptions", []))
-
-            assert is_violation or has_exception, \
+            assert is_violation, \
                 f"{violation['name']} with {violation['license']} is not actually a development violation"
 
     def test_violation_details(self):
-        """Verify that each violation contains required details."""
+        """Verify that each violation contains exactly the required fields."""
         with open("/root/license_policy.json", "r") as f:
             policy = json.load(f)
         with open("/root/license_audit_report.json", "r") as f:
             report = json.load(f)
 
+        # Define exactly the fields specified in instruction.md
+        required_fields = {"name", "version", "license", "dependency_type", "violation_type"}
+
         for violation in report["violations"]:
-            assert "name" in violation, "Violation missing 'name'"
-            assert "version" in violation, "Violation missing 'version'"
-            assert "license" in violation, "Violation missing 'license'"
-            assert "dependency_type" in violation, "Violation missing 'dependency_type'"
-            assert "violation_type" in violation, "Violation missing 'violation_type'"
+            # Check all required fields are present
+            for field in required_fields:
+                assert field in violation, f"Violation missing required field '{field}'"
+
+            # Check field types and values
+            assert isinstance(violation["name"], str), "Violation 'name' must be string"
+            assert isinstance(violation["version"], str), "Violation 'version' must be string"
+            assert isinstance(violation["license"], str), "Violation 'license' must be string"
+            assert violation["dependency_type"] in ["runtime", "development"], \
+                f"Invalid dependency_type: {violation['dependency_type']}"
             assert violation["violation_type"] in ["restricted", "prohibited"], \
                 f"Invalid violation_type: {violation['violation_type']}"
 
-            # Check exception_note is only present when exception was applied
-            has_exception = any(e["package"] == violation["name"] for e in policy.get("exceptions", []))
-            if has_exception:
-                # If there's an exception, exception_note is optional but allowed
-                if "exception_note" in violation:
-                    assert isinstance(violation["exception_note"], str), \
-                        f"exception_note must be string for {violation['name']}"
+            # Check no extra fields beyond what's specified in instruction.md
+            actual_fields = set(violation.keys())
+            extra_fields = actual_fields - required_fields
+            assert len(extra_fields) == 0, \
+                f"Violation contains unexpected fields: {extra_fields}. Only {required_fields} are allowed."
 
-    def test_exception_handling(self):
-        """Verify that exceptions from policy are properly applied."""
+    def test_complete_violation_detection(self):
+        """Verify ALL real violations are detected and NO false positives exist."""
+        with open("/root/project_dependencies.json", "r") as f:
+            input_data = json.load(f)
         with open("/root/license_policy.json", "r") as f:
             policy = json.load(f)
         with open("/root/license_audit_report.json", "r") as f:
             report = json.load(f)
 
-        # Check if policy has exceptions
-        if "exceptions" in policy and len(policy["exceptions"]) > 0:
-            # For each exception in policy, verify it's handled correctly
-            for exception in policy["exceptions"]:
-                pkg_name = exception["package"]
-                dep_entry = next(
-                    (d for d in report["dependencies"] if d["name"] == pkg_name),
-                    None
-                )
+        # Build expected violations by manually checking each dependency against policy
+        expected_violations = []
+        expected_non_violations = []
 
-                if dep_entry:  # Only check if the package exists in dependencies
-                    assert dep_entry["exception"] == True, \
-                        f"Package {pkg_name} should have exception=True"
-                    assert "exception_reason" in dep_entry, \
-                        f"Package {pkg_name} with exception should have exception_reason"
+        for dep in input_data["dependencies"]:
+            dep_type = dep["type"]
+            license_name = dep["license"]
+
+            # Check if this dependency should be a violation
+            is_restricted = license_name in policy.get("restricted_licenses", {}).get(dep_type, [])
+            is_prohibited = license_name in policy.get("prohibited_licenses", {}).get(dep_type, [])
+
+            if is_restricted or is_prohibited:
+                violation_type = "prohibited" if is_prohibited else "restricted"
+                expected_violations.append({
+                    "name": dep["name"],
+                    "version": dep["version"],
+                    "license": dep["license"],
+                    "dependency_type": dep_type,
+                    "violation_type": violation_type
+                })
+            else:
+                expected_non_violations.append({
+                    "name": dep["name"],
+                    "license": dep["license"],
+                    "type": dep_type
+                })
+
+        # Convert reported violations to comparable format
+        reported_violations = []
+        for violation in report["violations"]:
+            reported_violations.append({
+                "name": violation["name"],
+                "version": violation["version"],
+                "license": violation["license"],
+                "dependency_type": violation["dependency_type"],
+                "violation_type": violation["violation_type"]
+            })
+
+        # Check ALL expected violations are reported (no missed violations)
+        for expected in expected_violations:
+            found = False
+            for reported in reported_violations:
+                if (expected["name"] == reported["name"] and
+                    expected["version"] == reported["version"] and
+                    expected["license"] == reported["license"] and
+                    expected["dependency_type"] == reported["dependency_type"] and
+                    expected["violation_type"] == reported["violation_type"]):
+                    found = True
+                    break
+            assert found, f"Missing expected violation: {expected['name']} ({expected['license']}) should be {expected['violation_type']} for {expected['dependency_type']} dependencies"
+
+        # Check NO false positives are reported (no non-violations in violations list)
+        for reported in reported_violations:
+            found_expected = False
+            for expected in expected_violations:
+                if (expected["name"] == reported["name"] and
+                    expected["version"] == reported["version"] and
+                    expected["license"] == reported["license"] and
+                    expected["dependency_type"] == reported["dependency_type"] and
+                    expected["violation_type"] == reported["violation_type"]):
+                    found_expected = True
+                    break
+            assert found_expected, f"False positive violation reported: {reported['name']} ({reported['license']}) should NOT be a {reported['violation_type']} violation for {reported['dependency_type']} dependencies"
+
+        # Verify counts match
+        assert len(reported_violations) == len(expected_violations), \
+            f"Violation count mismatch: expected {len(expected_violations)}, got {len(reported_violations)}"
+
+
 
     def test_excel_report_sheets(self):
         """Verify that the Excel report contains required sheets."""
@@ -157,13 +223,33 @@ class TestLicenseAuditReport:
             assert sheet in wb.sheetnames, f"Missing required sheet '{sheet}' in Excel report"
 
     def test_excel_summary_sheet(self):
-        """Verify the content and layout of the Excel summary sheet."""
+        """Verify the exact structure and ordering of the Excel Summary sheet."""
         wb = load_workbook("/root/license_audit_report.xlsx")
         summary_sheet = wb["Summary"]
 
-        # Check the two-column layout as specified in instruction.md
-        # First column should contain labels, second column should contain values
-        expected_labels = [
+        # Get all cells as a 2D array
+        cells = [[cell.value for cell in row] for row in summary_sheet.iter_rows()]
+
+        # Filter out completely empty rows
+        non_empty_rows = [row for row in cells if any(cell is not None for cell in row)]
+
+        # Verify exactly two columns structure (instruction says "two columns")
+        for i, row in enumerate(non_empty_rows):
+            # Each meaningful row should have exactly 2 columns (label and value)
+            meaningful_cells = [cell for cell in row if cell is not None]
+            if len(meaningful_cells) > 2:
+                assert False, f"Row {i+1} has more than 2 meaningful cells: {meaningful_cells}. Expected exactly 2 columns."
+
+        # Extract first column (labels) and second column (values) from non-empty rows
+        labels = []
+        values = []
+        for row in non_empty_rows:
+            if len(row) > 0 and row[0] is not None:
+                labels.append(row[0])
+                values.append(row[1] if len(row) > 1 else None)
+
+        # Verify the exact sequence specified in instruction.md
+        expected_labels_sequence = [
             "License Audit Report",
             "Report Generated",
             "Policy Version",
@@ -174,54 +260,186 @@ class TestLicenseAuditReport:
             "Prohibited License Violations"
         ]
 
-        # Get all cells as a 2D array
-        cells = [[cell.value for cell in row] for row in summary_sheet.iter_rows()]
+        # Verify exactly the specified labels are present, no more, no less
+        expected_labels_set = set(expected_labels_sequence)
+        actual_labels_set = set(labels)
 
-        # Check that expected labels are in the first column
-        first_col_values = [row[0] if row else None for row in cells if row]
-        for label in expected_labels:
-            assert label in first_col_values, \
-                f"Expected label '{label}' not found in first column of Summary sheet"
+        # Check for missing labels
+        missing_labels = expected_labels_set - actual_labels_set
+        assert len(missing_labels) == 0, \
+            f"Missing required labels in Summary sheet: {missing_labels}"
 
-        # Verify two-column layout structure: labels in col A, values in col B
-        # Find the key metric rows and verify they have corresponding values
-        value_labels = ["Total Dependencies", "Total Violations",
-                       "Restricted License Violations", "Prohibited License Violations",
-                       "Report Generated", "Policy Version"]
+        # Check for extra labels not specified in instruction.md
+        extra_labels = actual_labels_set - expected_labels_set
+        assert len(extra_labels) == 0, \
+            f"Summary sheet contains extra labels not specified in instruction.md: {extra_labels}. Only these 8 labels are allowed: {expected_labels_sequence}"
 
-        for i, row in enumerate(cells):
-            if row and len(row) > 0 and row[0] in value_labels:
-                assert len(row) > 1, f"Row {i+1} with label '{row[0]}' missing value in column B"
-                assert row[1] is not None, f"Row {i+1} with label '{row[0]}' has None value in column B"
+        # Check that all required labels appear in order
+        label_positions = {}
+        for i, expected_label in enumerate(expected_labels_sequence):
+            found_positions = [j for j, actual_label in enumerate(labels) if actual_label == expected_label]
+            assert len(found_positions) > 0, \
+                f"Required label '{expected_label}' not found in Summary sheet"
+            label_positions[expected_label] = found_positions[0]
+
+        # Verify ordering: each label should appear after the previous one
+        for i in range(1, len(expected_labels_sequence)):
+            prev_label = expected_labels_sequence[i-1]
+            curr_label = expected_labels_sequence[i]
+            assert label_positions[prev_label] < label_positions[curr_label], \
+                f"Label '{curr_label}' should appear after '{prev_label}' but appears at position {label_positions[curr_label]} vs {label_positions[prev_label]}"
+
+        # Verify that metric labels have corresponding values
+        metric_labels = ["Total Dependencies", "Total Violations",
+                        "Restricted License Violations", "Prohibited License Violations",
+                        "Report Generated", "Policy Version"]
+
+        for label in metric_labels:
+            if label in label_positions:
+                pos = label_positions[label]
+                value = values[pos] if pos < len(values) else None
+                assert value is not None, f"Label '{label}' missing corresponding value in column B"
 
                 # Verify type constraints for numeric fields
-                if row[0] in ["Total Dependencies", "Total Violations",
-                             "Restricted License Violations", "Prohibited License Violations"]:
-                    assert isinstance(row[1], (int, float)), \
-                        f"Row {i+1} with label '{row[0]}' should have numeric value, got {type(row[1])}"
+                if label in ["Total Dependencies", "Total Violations",
+                            "Restricted License Violations", "Prohibited License Violations"]:
+                    is_valid = (isinstance(value, (int, float)) or
+                               (isinstance(value, str) and value.startswith('=')))
+                    assert is_valid, \
+                        f"Label '{label}' should have numeric value or formula, got {type(value)}: {value}"
 
-        # Verify that data is consistent with JSON report
+        # Verify data consistency with JSON report
         with open("/root/license_audit_report.json", "r") as f:
             json_report = json.load(f)
 
-        # Check total dependencies count matches
-        flat_values = [val for row in cells for val in row if val is not None]
-        expected_count = json_report["summary"]["total_dependencies"]
-        assert expected_count in flat_values or str(expected_count) in [str(v) for v in flat_values], \
-            f"Total dependencies count ({expected_count}) not found in Summary sheet"
+        # Verify exact label-to-value mapping for all labels
+        expected_mappings = {
+            "Report Generated": json_report["timestamp"],
+            "Policy Version": json_report["policy_version"],
+            "Total Dependencies": json_report["summary"]["total_dependencies"],
+            "Total Violations": json_report["summary"]["total_violations"],
+            "Restricted License Violations": json_report["summary"]["violation_categories"]["restricted"],
+            "Prohibited License Violations": json_report["summary"]["violation_categories"]["prohibited"]
+        }
+
+        for label, expected_value in expected_mappings.items():
+            assert label in label_positions, f"Required label '{label}' not found in Summary sheet"
+            pos = label_positions[label]
+            actual_value = values[pos] if pos < len(values) else None
+
+            # Handle different value types and Excel formulas
+            if isinstance(expected_value, int):
+                # For numeric values, allow either the number itself or a formula
+                if isinstance(actual_value, str) and actual_value.startswith('='):
+                    # Formula detected - this is acceptable for numeric fields
+                    pass
+                elif isinstance(actual_value, (int, float)):
+                    assert actual_value == expected_value, \
+                        f"Label '{label}' has incorrect value: expected {expected_value}, got {actual_value}"
+                else:
+                    # Try converting string to int
+                    try:
+                        actual_int = int(actual_value)
+                        assert actual_int == expected_value, \
+                            f"Label '{label}' has incorrect value: expected {expected_value}, got {actual_int}"
+                    except (ValueError, TypeError):
+                        assert False, \
+                            f"Label '{label}' should have numeric value {expected_value}, got non-numeric: {actual_value} (type: {type(actual_value)})"
+            else:
+                # For string values (timestamp, policy_version)
+                assert str(actual_value) == str(expected_value), \
+                    f"Label '{label}' has incorrect value: expected '{expected_value}', got '{actual_value}'"
 
     def test_excel_violations_sheet(self):
-        """Verify the Violations sheet contains the correct violations."""
+        """Verify the Violations sheet matches JSON violations exactly."""
         wb = load_workbook("/root/license_audit_report.xlsx")
         violations_sheet = wb["Violations"]
 
-        # Check headers
-        headers = [cell.value for cell in violations_sheet[1]]
-        expected_headers = ["Package", "Version", "License", "Type", "Violation", "Notes"]
+        # Load JSON violations for comparison
+        with open("/root/license_audit_report.json", "r") as f:
+            report = json.load(f)
+        json_violations = report["violations"]
 
-        for header in expected_headers:
-            assert header in headers or any(h and header.lower() in h.lower() for h in headers if h), \
-                f"Expected header '{header}' not found in Violations sheet"
+        # Check headers exactly match specification in instruction.md
+        headers = [cell.value for cell in violations_sheet[1] if cell.value is not None]
+        expected_headers = ["Package", "Version", "License", "Type", "Violation"]
+
+        # Must have exactly the specified headers, no more, no less
+        assert len(headers) == len(expected_headers), \
+            f"Excel has {len(headers)} headers {headers}, expected exactly {len(expected_headers)} headers {expected_headers}"
+
+        for i, expected_header in enumerate(expected_headers):
+            assert i < len(headers), f"Missing header '{expected_header}' at position {i}"
+            actual_header = headers[i]
+            # Allow case-insensitive matching
+            assert expected_header.lower() == actual_header.lower(), \
+                f"Header at position {i}: expected '{expected_header}', got '{actual_header}'"
+
+        # Find column indices
+        header_map = {}
+        for i, header in enumerate(headers):
+            if header:
+                if "package" in header.lower():
+                    header_map["Package"] = i
+                elif "version" in header.lower():
+                    header_map["Version"] = i
+                elif "license" in header.lower():
+                    header_map["License"] = i
+                elif "type" in header.lower():
+                    header_map["Type"] = i
+                elif "violation" in header.lower():
+                    header_map["Violation"] = i
+
+        # Verify all required columns are present
+        required_cols = ["Package", "Version", "License", "Type", "Violation"]
+        for col in required_cols:
+            assert col in header_map, f"Column '{col}' not found in Excel headers"
+
+        # Get data rows (skip header row)
+        excel_violations = []
+        for row_idx, row in enumerate(violations_sheet.iter_rows(min_row=2), 2):
+            # Skip empty rows
+            if all(cell.value is None for cell in row):
+                continue
+
+            violation_data = {}
+            for col_name, col_idx in header_map.items():
+                if col_idx < len(row):
+                    violation_data[col_name] = row[col_idx].value
+                else:
+                    violation_data[col_name] = None
+
+            # Only add if the row has meaningful data
+            if any(violation_data[col] is not None for col in required_cols):
+                excel_violations.append(violation_data)
+
+        # Cross-validate: Excel violations should match JSON violations exactly
+        assert len(excel_violations) == len(json_violations), \
+            f"Excel has {len(excel_violations)} violation rows, JSON has {len(json_violations)}"
+
+        # Check each violation matches
+        for i, json_violation in enumerate(json_violations):
+            # Find matching Excel violation by package name
+            excel_violation = None
+            for excel_v in excel_violations:
+                if excel_v.get("Package") == json_violation["name"]:
+                    excel_violation = excel_v
+                    break
+
+            assert excel_violation is not None, \
+                f"JSON violation for '{json_violation['name']}' not found in Excel sheet"
+
+            # Verify field mapping
+            assert excel_violation["Package"] == json_violation["name"], \
+                f"Package name mismatch: Excel '{excel_violation['Package']}' vs JSON '{json_violation['name']}'"
+            assert excel_violation["Version"] == json_violation["version"], \
+                f"Version mismatch for {json_violation['name']}"
+            assert excel_violation["License"] == json_violation["license"], \
+                f"License mismatch for {json_violation['name']}"
+            assert excel_violation["Type"].lower() == json_violation["dependency_type"].lower(), \
+                f"Type mismatch for {json_violation['name']}"
+            assert excel_violation["Violation"].lower() == json_violation["violation_type"].lower(), \
+                f"Violation type mismatch for {json_violation['name']}"
 
 
     def test_violation_count_accuracy(self):
@@ -261,18 +479,23 @@ class TestLicenseAuditReport:
             f"Prohibited count mismatch: reported {categories['prohibited']}, actual {prohibited_count}"
 
     def test_dependency_schema_validation(self):
-        """Verify that each dependency in the report follows the required schema."""
+        """Verify that each dependency in the report follows the required schema exactly."""
         with open("/root/license_audit_report.json", "r") as f:
             report = json.load(f)
 
+        # Define exactly the fields specified in instruction.md for dependencies
+        required_fields = {"name", "version", "license", "type", "compliant"}
+
         for dep in report["dependencies"]:
-            # Check required fields
-            assert "name" in dep, f"Missing 'name' in dependency: {dep}"
-            assert "version" in dep, f"Missing 'version' in dependency: {dep}"
-            assert "license" in dep, f"Missing 'license' in dependency: {dep}"
-            assert "type" in dep, f"Missing 'type' in dependency: {dep}"
-            assert "compliant" in dep, f"Missing 'compliant' in dependency: {dep}"
-            assert "exception" in dep, f"Missing 'exception' in dependency: {dep}"
+            # Check all required fields are present
+            for field in required_fields:
+                assert field in dep, f"Missing required field '{field}' in dependency: {dep}"
+
+            # Check no extra fields beyond what's specified in instruction.md
+            actual_fields = set(dep.keys())
+            extra_fields = actual_fields - required_fields
+            assert len(extra_fields) == 0, \
+                f"Dependency '{dep['name']}' contains unexpected fields: {extra_fields}. Only {required_fields} are allowed."
 
             # Check field types
             assert isinstance(dep["name"], str), f"'name' must be string in {dep['name']}"
@@ -280,15 +503,6 @@ class TestLicenseAuditReport:
             assert isinstance(dep["license"], str), f"'license' must be string in {dep['name']}"
             assert dep["type"] in ["runtime", "development"], f"Invalid type '{dep['type']}' in {dep['name']}"
             assert isinstance(dep["compliant"], bool), f"'compliant' must be bool in {dep['name']}"
-            assert isinstance(dep["exception"], bool), f"'exception' must be bool in {dep['name']}"
-
-            # Check exception_reason only exists when exception is True
-            if dep["exception"]:
-                assert "exception_reason" in dep, f"Missing 'exception_reason' when exception=True in {dep['name']}"
-                assert isinstance(dep["exception_reason"], str), f"'exception_reason' must be string in {dep['name']}"
-            else:
-                assert "exception_reason" not in dep, \
-                    f"'exception_reason' must NOT exist when exception=False in {dep['name']}"
 
     def test_timestamp_present(self):
         """Verify that the report includes a valid ISO8601 timestamp."""
@@ -304,67 +518,9 @@ class TestLicenseAuditReport:
         assert re.match(iso8601_pattern, report["timestamp"]), \
             f"Timestamp '{report['timestamp']}' is not in valid ISO8601 format"
 
-    def test_dual_license_handling(self):
-        """Verify that dual licenses are handled according to policy."""
-        with open("/root/project_dependencies.json", "r") as f:
-            input_data = json.load(f)
-        with open("/root/license_policy.json", "r") as f:
-            policy = json.load(f)
-        with open("/root/license_audit_report.json", "r") as f:
-            report = json.load(f)
-
-        # Verify dual license handling policy exists
-        assert "dual_license_handling" in policy, "Policy must specify dual_license_handling"
-
-        # Check for any dual licenses in input
-        dual_license_deps = [dep for dep in input_data["dependencies"] if " OR " in dep.get("license", "")]
-
-        if dual_license_deps:
-            # If dual licenses exist, verify they follow the policy handling
-            handling_policy = policy.get("dual_license_handling", "most_permissive")
-
-            for input_dep in dual_license_deps:
-                report_dep = next(
-                    (d for d in report["dependencies"] if d["name"] == input_dep["name"]),
-                    None
-                )
-                assert report_dep is not None, f"Dual license dependency {input_dep['name']} not found in report"
-
-                # For "most_permissive" policy, verify that the most permissive license is used
-                if handling_policy == "most_permissive":
-                    licenses = [lic.strip() for lic in input_dep["license"].split(" OR ")]
-                    dep_type = input_dep["type"]
-
-                    # Find the most permissive license (first one that's allowed, if any)
-                    allowed_licenses = policy["allowed_licenses"].get(dep_type, [])
-                    most_permissive = None
-                    for lic in licenses:
-                        if lic in allowed_licenses:
-                            most_permissive = lic
-                            break
-
-                    # If no allowed license found, use first license for evaluation
-                    effective_license = most_permissive if most_permissive else licenses[0]
-
-                    # The compliant status should reflect the effective license evaluation
-                    has_exception = report_dep.get("exception", False)
-                    is_violation = (
-                        effective_license in policy.get("restricted_licenses", {}).get(dep_type, []) or
-                        effective_license in policy.get("prohibited_licenses", {}).get(dep_type, [])
-                    )
-                    expected_compliant = has_exception or not is_violation
-
-                    assert report_dep["compliant"] == expected_compliant, \
-                        f"Dual license {input_dep['name']} compliant status incorrect. " \
-                        f"License: {input_dep['license']}, Effective: {effective_license}, " \
-                        f"Expected compliant: {expected_compliant}, Got: {report_dep['compliant']}"
-        else:
-            # If no dual licenses exist in data, verify policy is ready to handle them
-            assert policy.get("dual_license_handling") == "most_permissive", \
-                "Policy should specify dual_license_handling='most_permissive' for future dual license support"
 
     def test_compliant_flag_consistency(self):
-        """Verify that compliant flags are consistent with policy and exceptions."""
+        """Verify that compliant flags are consistent with policy."""
         with open("/root/project_dependencies.json", "r") as f:
             input_data = json.load(f)
         with open("/root/license_policy.json", "r") as f:
@@ -382,52 +538,20 @@ class TestLicenseAuditReport:
 
             dep_type = dep["type"]
             license_name = dep["license"]
-            has_exception = dep.get("exception", False)
-
-            # Handle dual licenses if present
-            effective_license = license_name
-            if " OR " in license_name and policy.get("dual_license_handling") == "most_permissive":
-                licenses = license_name.split(" OR ")
-                allowed_licenses = policy["allowed_licenses"].get(dep_type, [])
-                for lic in licenses:
-                    if lic.strip() in allowed_licenses:
-                        effective_license = lic.strip()
-                        break
 
             # Check if license violates policy
             is_violation = (
-                effective_license in policy.get("restricted_licenses", {}).get(dep_type, []) or
-                effective_license in policy.get("prohibited_licenses", {}).get(dep_type, [])
+                license_name in policy.get("restricted_licenses", {}).get(dep_type, []) or
+                license_name in policy.get("prohibited_licenses", {}).get(dep_type, [])
             )
 
-            # If there's an exception, dependency should be compliant regardless of violation
-            # If no exception and no violation, should be compliant
-            # If no exception but has violation, should NOT be compliant
-            expected_compliant = has_exception or not is_violation
+            # If no violation, should be compliant; if violation, should NOT be compliant
+            expected_compliant = not is_violation
 
             assert dep["compliant"] == expected_compliant, \
                 f"Dependency {dep['name']}: compliant={dep['compliant']}, expected={expected_compliant} " \
-                f"(exception={has_exception}, violation={is_violation}, license={effective_license})"
+                f"(violation={is_violation}, license={license_name})"
 
-    def test_exception_note_in_violations(self):
-        """Verify that violations with exceptions have exception_note."""
-        with open("/root/license_policy.json", "r") as f:
-            policy = json.load(f)
-        with open("/root/license_audit_report.json", "r") as f:
-            report = json.load(f)
-
-        # Get packages with exceptions
-        exception_packages = {e["package"] for e in policy.get("exceptions", [])}
-
-        for violation in report["violations"]:
-            # If this violation is for a package with an exception, it should have exception_note
-            if violation["name"] in exception_packages:
-                assert "exception_note" in violation, \
-                    f"Violation for {violation['name']} should have exception_note since it has an exception"
-                assert isinstance(violation["exception_note"], str), \
-                    f"exception_note for {violation['name']} should be a string"
-                assert violation["exception_note"].strip() != "", \
-                    f"exception_note for {violation['name']} should not be empty"
 
     def test_violation_type_accuracy(self):
         """Verify that violation_type correctly reflects license category."""

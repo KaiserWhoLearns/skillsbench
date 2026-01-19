@@ -35,30 +35,13 @@ for dep in dependencies_data["dependencies"]:
     dep_type = dep["type"]
     license_name = dep["license"]
 
-    # Handle dual licenses (take most permissive as per policy)
-    if " OR " in license_name and policy["dual_license_handling"] == "most_permissive":
-        licenses = license_name.split(" OR ")
-        # Check if any license is allowed
-        for lic in licenses:
-            if lic in policy["allowed_licenses"][dep_type]:
-                license_name = lic
-                break
-
     # Check for violations
     violation_type = None
-    exception_applied = False
 
-    # Check if this package has an exception
-    for exception in policy.get("exceptions", []):
-        if exception["package"] == dep["name"]:
-            exception_applied = True
-            break
-
-    if not exception_applied:
-        if license_name in policy["prohibited_licenses"][dep_type]:
-            violation_type = "prohibited"
-        elif license_name in policy["restricted_licenses"][dep_type]:
-            violation_type = "restricted"
+    if license_name in policy["prohibited_licenses"][dep_type]:
+        violation_type = "prohibited"
+    elif license_name in policy["restricted_licenses"][dep_type]:
+        violation_type = "restricted"
 
     # Add to dependencies list
     dep_entry = {
@@ -66,15 +49,8 @@ for dep in dependencies_data["dependencies"]:
         "version": dep["version"],
         "license": dep["license"],
         "type": dep_type,
-        "compliant": violation_type is None,
-        "exception": exception_applied  # Always include exception field
+        "compliant": violation_type is None
     }
-
-    if exception_applied:
-        dep_entry["exception_reason"] = next(
-            (e["reason"] for e in policy["exceptions"] if e["package"] == dep["name"]),
-            "Exception granted"
-        )
 
     report["dependencies"].append(dep_entry)
 
@@ -87,9 +63,6 @@ for dep in dependencies_data["dependencies"]:
             "dependency_type": dep_type,
             "violation_type": violation_type
         }
-
-        if exception_applied:
-            violation["exception_note"] = "Exception granted but still listed for tracking"
 
         report["violations"].append(violation)
         report["summary"]["violation_categories"][violation_type] += 1
@@ -148,8 +121,8 @@ summary_sheet.column_dimensions["B"].width = 40
 # Violations Sheet
 violations_sheet = wb.create_sheet("Violations")
 
-# Add headers
-headers = ["Package", "Version", "License", "Type", "Violation", "Notes"]
+# Add headers (exactly as specified in instruction.md)
+headers = ["Package", "Version", "License", "Type", "Violation"]
 for col, header in enumerate(headers, 1):
     cell = violations_sheet.cell(row=1, column=col, value=header)
     cell.font = Font(bold=True)
@@ -162,10 +135,9 @@ for row, violation in enumerate(report["violations"], 2):
     violations_sheet.cell(row=row, column=3, value=violation["license"])
     violations_sheet.cell(row=row, column=4, value=violation["dependency_type"])
     violations_sheet.cell(row=row, column=5, value=violation["violation_type"])
-    violations_sheet.cell(row=row, column=6, value=violation.get("exception_note", ""))
 
 # Adjust column widths
-for col in range(1, 7):
+for col in range(1, 6):
     violations_sheet.column_dimensions[chr(64 + col)].width = 20
 
 # Note: Removed "All Dependencies" sheet as per requirements

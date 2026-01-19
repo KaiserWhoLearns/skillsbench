@@ -37,9 +37,6 @@ When checking license compliance, consider:
    - Some licenses restrict commercial use
    - Patent clauses can affect usage
 
-3. **Dual Licensing**:
-   - Format: "License-A OR License-B"
-   - Usually choose the most permissive option
 
 ## Working with JSON Files
 
@@ -90,7 +87,6 @@ summary_sheet = wb.create_sheet("Summary")
 3. **Analyze Each Dependency**:
    - Check license against allowed/restricted/prohibited lists
    - Consider dependency type (runtime vs development)
-   - Check for exceptions
 4. **Generate Report**:
    - Create structured JSON report
    - Generate Excel workbook with multiple sheets

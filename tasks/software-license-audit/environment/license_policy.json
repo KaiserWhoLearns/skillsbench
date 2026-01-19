@@ -54,15 +54,6 @@
       "UNLICENSED"
     ]
   },
-  "dual_license_handling": "most_permissive",
-  "exceptions": [
-    {
-      "package": "elasticsearch",
-      "reason": "Legacy system dependency, migration planned Q3 2024",
-      "approved_by": "CTO",
-      "expiry": "2024-09-30"
-    }
-  ],
   "compliance_requirements": {
     "attribution_required": true,
     "notice_file_required": true,
